@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ISS // LIVE</title>
+  <meta name="description" content="Live position of the International Space Station." />
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Redaction:wght@400;700&family=IBM+Plex+Mono:wght@300;400;500&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg: #0a0e14;
+      --surface: rgba(19, 24, 32, 0.78);
+      --border: rgba(255, 255, 255, 0.08);
+      --text: #e8e6df;
+      --text-dim: #7a7567;
+      --accent: #f59e0b;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'IBM Plex Sans', system-ui, sans-serif;
+      overflow: hidden;
+    }
+
+    #map { position: absolute; inset: 0; background: var(--bg); }
+
+    /* Leaflet overrides */
+    .leaflet-container { background: var(--bg) !important; }
+    .leaflet-control-attribution {
+      background: rgba(10, 14, 20, 0.7) !important;
+      color: var(--text-dim) !important;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      padding: 4px 8px !important;
+    }
+    .leaflet-control-attribution a { color: var(--text-dim) !important; }
+    .leaflet-control-zoom a {
+      background: var(--surface) !important;
+      color: var(--text) !important;
+      border-color: var(--border) !important;
+      font-family: 'IBM Plex Mono', monospace;
+      backdrop-filter: blur(12px);
+    }
+    .leaflet-control-zoom a:hover { background: rgba(245, 158, 11, 0.12) !important; }
+
+    /* Header */
+    .header {
+      position: absolute;
+      top: 24px; left: 24px;
+      z-index: 1000;
+      pointer-events: none;
+    }
+    .header .title {
+      font-family: 'Redaction', 'Times New Roman', serif;
+      font-size: 44px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1;
+      color: var(--text);
+    }
+    .header .sub {
+      margin-top: 8px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      font-weight: 400;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    /* Telemetry panel */
+    .panel {
+      position: absolute;
+      bottom: 24px; left: 24px;
+      z-index: 1000;
+      background: var(--surface);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      padding: 18px 22px;
+      min-width: 300px;
+      font-family: 'IBM Plex Mono', monospace;
+    }
+    .panel .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 8px 0;
+      border-bottom: 1px dashed var(--border);
+    }
+    .panel .row:last-child { border-bottom: none; }
+    .panel .label {
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .panel .value {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .panel .value.accent { color: var(--accent); }
+
+    /* Status pill */
+    .status {
+      position: absolute;
+      top: 24px; right: 24px;
+      z-index: 1000;
+      display: flex; align-items: center; gap: 10px;
+      background: var(--surface);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      padding: 10px 14px;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .status .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 12px var(--accent);
+      animation: breathe 2s ease-in-out infinite;
+    }
+    @keyframes breathe {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
+    }
+
+    /* ISS marker */
+    .iss-marker { position: relative; width: 28px; height: 28px; }
+    .iss-marker .core {
+      position: absolute; inset: 10px;
+      background: var(--accent);
+      border-radius: 50%;
+      box-shadow: 0 0 16px var(--accent), 0 0 32px rgba(245, 158, 11, 0.4);
+    }
+    .iss-marker .ring {
+      position: absolute; inset: 0;
+      border: 1.5px solid var(--accent);
+      border-radius: 50%;
+      animation: ping 2s ease-out infinite;
+    }
+    @keyframes ping {
+      0%   { transform: scale(0.3); opacity: 1; }
+      100% { transform: scale(1.8); opacity: 0; }
+    }
+
+    @media (max-width: 640px) {
+      .header { top: 16px; left: 16px; }
+      .header .title { font-size: 30px; }
+      .panel { left: 16px; right: 16px; bottom: 16px; min-width: 0; padding: 14px 18px; }
+      .status { top: 16px; right: 16px; padding: 8px 12px; font-size: 10px; letter-spacing: 0.15em; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="title">ISS // LIVE</div>
+    <div class="sub">International Space Station · NORAD 25544</div>
+  </div>
+
+  <div class="status">
+    <div class="dot"></div>
+    <span id="statusText">Acquiring</span>
+  </div>
+
+  <div id="map"></div>
+
+  <div class="panel">
+    <div class="row"><span class="label">Latitude</span>   <span class="value"        id="lat">—</span></div>
+    <div class="row"><span class="label">Longitude</span>  <span class="value"        id="lon">—</span></div>
+    <div class="row"><span class="label">Altitude</span>   <span class="value"        id="alt">—</span></div>
+    <div class="row"><span class="label">Velocity</span>   <span class="value accent" id="vel">—</span></div>
+    <div class="row"><span class="label">Sunlight</span>   <span class="value"        id="vis">—</span></div>
+    <div class="row"><span class="label">Updated</span>    <span class="value"        id="ts">—</span></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const API      = 'https://api.wheretheiss.at/v1/satellites/25544';
+    const POLL_MS  = 3000;
+    const TRAIL_MAX = 120; // ~6 minutes of breadcrumbs
+
+    // Map — worldCopyJump keeps the marker visible when you pan across the antimeridian.
+    const map = L.map('map', {
+      zoomControl: false,
+      worldCopyJump: true,
+      attributionControl: true,
+      minZoom: 2,
+    }).setView([0, 0], 3);
+
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; OpenStreetMap · &copy; CARTO · data wheretheiss.at',
+      subdomains: 'abcd',
+      maxZoom: 19,
+    }).addTo(map);
+
+    const issIcon = L.divIcon({
+      className: 'iss-icon',
+      html: '<div class="iss-marker"><div class="ring"></div><div class="core"></div></div>',
+      iconSize: [28, 28],
+      iconAnchor: [14, 14],
+    });
+
+    let marker = null;
+    const trail = [];
+    // Multi-segment polyline so the line doesn't cut across the globe at ±180°.
+    const trailLine = L.polyline([], {
+      color: '#f59e0b',
+      weight: 1.5,
+      opacity: 0.55,
+      dashArray: '2 4',
+    }).addTo(map);
+    let firstFix = true;
+
+    const fmt = {
+      coord: (n) => `${n.toFixed(4)}°`,
+      km:    (n) => `${n.toFixed(2)} km`,
+      speed: (n) => `${Math.round(n).toLocaleString()} km/h`,
+      time:  (ts) => new Date(ts * 1000).toLocaleTimeString(),
+    };
+
+    function splitOnWrap(points) {
+      const segs = [[]];
+      for (let i = 0; i < points.length; i++) {
+        if (i > 0 && Math.abs(points[i][1] - points[i - 1][1]) > 180) {
+          segs.push([]);
+        }
+        segs[segs.length - 1].push(points[i]);
+      }
+      return segs;
+    }
+
+    async function tick() {
+      try {
+        const res = await fetch(API);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const d = await res.json();
+
+        const pos = [d.latitude, d.longitude];
+
+        if (!marker) {
+          marker = L.marker(pos, { icon: issIcon, keyboard: false }).addTo(map);
+        } else {
+          marker.setLatLng(pos);
+        }
+
+        trail.push(pos);
+        if (trail.length > TRAIL_MAX) trail.shift();
+        trailLine.setLatLngs(splitOnWrap(trail));
+
+        if (firstFix) {
+          map.setView(pos, 3);
+          firstFix = false;
+        }
+
+        document.getElementById('lat').textContent = fmt.coord(d.latitude);
+        document.getElementById('lon').textContent = fmt.coord(d.longitude);
+        document.getElementById('alt').textContent = fmt.km(d.altitude);
+        document.getElementById('vel').textContent = fmt.speed(d.velocity);
+        document.getElementById('vis').textContent = d.visibility === 'daylight' ? 'Daylight' : 'Eclipsed';
+        document.getElementById('ts').textContent  = fmt.time(d.timestamp);
+        document.getElementById('statusText').textContent = 'Tracking';
+      } catch (err) {
+        document.getElementById('statusText').textContent = 'Reconnecting';
+        console.error('ISS fetch failed:', err);
+      }
+    }
+
+    tick();
+    setInterval(tick, POLL_MS);
+  </script>
+</body>
+</html>
