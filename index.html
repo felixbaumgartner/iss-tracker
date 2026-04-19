@@ -129,6 +129,60 @@
       text-transform: uppercase;
       color: var(--text-dim);
     }
+
+    /* Crew panel */
+    .crew {
+      position: absolute;
+      top: 72px; right: 24px;
+      z-index: 1000;
+      width: 260px;
+      background: var(--surface);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      padding: 14px 18px;
+      font-family: 'IBM Plex Mono', monospace;
+      max-height: calc(100vh - 120px);
+      overflow-y: auto;
+    }
+    .crew .heading {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 10px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      padding-bottom: 8px;
+      border-bottom: 1px dashed var(--border);
+      margin-bottom: 8px;
+    }
+    .crew .heading .count { color: var(--accent); font-weight: 500; }
+    .crew ul { list-style: none; }
+    .crew li {
+      padding: 6px 0;
+      font-size: 12px;
+      color: var(--text);
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      border-bottom: 1px dashed var(--border);
+    }
+    .crew li:last-child { border-bottom: none; }
+    .crew li .craft {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+    .crew li.iss .craft { color: var(--accent); }
+    .crew .empty {
+      font-size: 11px;
+      color: var(--text-dim);
+      font-style: italic;
+      padding: 4px 0;
+    }
     .status .dot {
       width: 8px; height: 8px;
       border-radius: 50%;
@@ -165,6 +219,7 @@
       .header .title { font-size: 30px; }
       .panel { left: 16px; right: 16px; bottom: 16px; min-width: 0; padding: 14px 18px; }
       .status { top: 16px; right: 16px; padding: 8px 12px; font-size: 10px; letter-spacing: 0.15em; }
+      .crew { display: none; }
     }
   </style>
 </head>
@@ -179,11 +234,22 @@
     <span id="statusText">Acquiring</span>
   </div>
 
+  <div class="crew" id="crewPanel">
+    <div class="heading">
+      <span>Humans in Orbit</span>
+      <span class="count" id="crewCount">—</span>
+    </div>
+    <ul id="crewList">
+      <li class="empty">Loading roster…</li>
+    </ul>
+  </div>
+
   <div id="map"></div>
 
   <div class="panel">
     <div class="row"><span class="label">Latitude</span>   <span class="value"        id="lat">—</span></div>
     <div class="row"><span class="label">Longitude</span>  <span class="value"        id="lon">—</span></div>
+    <div class="row"><span class="label">Over</span>       <span class="value"        id="over">—</span></div>
     <div class="row"><span class="label">Altitude</span>   <span class="value"        id="alt">—</span></div>
     <div class="row"><span class="label">Velocity</span>   <span class="value accent" id="vel">—</span></div>
     <div class="row"><span class="label">Sunlight</span>   <span class="value"        id="vis">—</span></div>
@@ -191,6 +257,7 @@
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/@joergdietrich/leaflet.terminator@1.1.0/L.Terminator.js"></script>
   <script>
     const API      = 'https://api.wheretheiss.at/v1/satellites/25544';
     const POLL_MS  = 3000;
@@ -211,6 +278,17 @@
       subdomains: 'abcd',
       maxZoom: 19,
     }).addTo(map);
+
+    // Day/night terminator — the boundary between Earth's lit and shadowed halves.
+    // Refreshed every minute; moves ~15°/hr so that's plenty.
+    const terminator = L.terminator({
+      color: '#000',
+      fillColor: '#000',
+      fillOpacity: 0.35,
+      weight: 0,
+      interactive: false,
+    }).addTo(map);
+    setInterval(() => terminator.setTime(new Date()), 60_000);
 
     const issIcon = L.divIcon({
       className: 'iss-icon',
@@ -248,6 +326,34 @@
       return segs;
     }
 
+    // "Currently over" — throttled reverse geocode via Nominatim.
+    // ISS crosses a country every few minutes, so 20s cadence is ample and stays well
+    // within Nominatim's 1 req/sec hobby policy.
+    let lastGeocode = 0;
+    const GEOCODE_MS = 20_000;
+    const oceanByLon = (lat, lon) => {
+      if (lat > 66) return 'Arctic Ocean';
+      if (lat < -60) return 'Southern Ocean';
+      if (lon > 20 && lon < 147) return 'Indian Ocean';
+      if (lon >= -70 && lon <= 20) return 'Atlantic Ocean';
+      return 'Pacific Ocean';
+    };
+    async function updateOver(lat, lon) {
+      const now = Date.now();
+      if (now - lastGeocode < GEOCODE_MS) return;
+      lastGeocode = now;
+      try {
+        const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=3&lat=${lat}&lon=${lon}`;
+        const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        if (!res.ok) throw new Error('geocode ' + res.status);
+        const g = await res.json();
+        const country = g.address && (g.address.country || g.address.sea || g.address.ocean);
+        document.getElementById('over').textContent = country || oceanByLon(lat, lon);
+      } catch {
+        document.getElementById('over').textContent = oceanByLon(lat, lon);
+      }
+    }
+
     async function tick() {
       try {
         const res = await fetch(API);
@@ -278,12 +384,55 @@
         document.getElementById('vis').textContent = d.visibility === 'daylight' ? 'Daylight' : 'Eclipsed';
         document.getElementById('ts').textContent  = fmt.time(d.timestamp);
         document.getElementById('statusText').textContent = 'Tracking';
+
+        updateOver(d.latitude, d.longitude);
       } catch (err) {
         document.getElementById('statusText').textContent = 'Reconnecting';
         console.error('ISS fetch failed:', err);
       }
     }
 
+    // Onboard roster — Open Notify's astros.json is HTTP-only. In production we
+    // hit /api/crew (Vercel serverless proxy, HTTPS); on plain-HTTP localhost the
+    // page can call the upstream directly without mixed-content errors.
+    // ISS crew is highlighted; other craft (Tiangong, etc.) render dimmer.
+    async function loadCrew() {
+      const list = document.getElementById('crewList');
+      const count = document.getElementById('crewCount');
+      const sources = ['/api/crew'];
+      if (location.protocol === 'http:') {
+        sources.push('http://api.open-notify.org/astros.json');
+      }
+      for (const url of sources) {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) continue;
+          const data = await res.json();
+          if (!data || !Array.isArray(data.people)) continue;
+          count.textContent = String(data.number);
+          list.innerHTML = '';
+          // ISS crew first, then others, names alphabetized within each group.
+          const sorted = [...data.people].sort((a, b) => {
+            const aIss = a.craft === 'ISS' ? 0 : 1;
+            const bIss = b.craft === 'ISS' ? 0 : 1;
+            return aIss - bIss || a.name.localeCompare(b.name);
+          });
+          for (const p of sorted) {
+            const li = document.createElement('li');
+            if (p.craft === 'ISS') li.classList.add('iss');
+            li.innerHTML = `<span>${p.name}</span><span class="craft">${p.craft}</span>`;
+            list.appendChild(li);
+          }
+          return;
+        } catch (err) {
+          console.warn('Crew source failed:', url, err);
+        }
+      }
+      list.innerHTML = '<li class="empty">Roster currently unavailable.</li>';
+      count.textContent = '';
+    }
+
+    loadCrew();
     tick();
     setInterval(tick, POLL_MS);
   </script>
